@@ -1,7 +1,17 @@
+/**
+ * This experiment originally used HTML5 Audio for the sounds but
+ * I changed this to be Flash since browser implementation of the
+ * <audio> element are not very reliable. Especially problematic
+ * is the fact that some browsers do not take cache headers into 
+ * account and instead fetch the audio assets repeatedly from the 
+ * server causing delayed playback and high bandwidth costs.
+ * 
+ * http://hakim.se/experiments/html5/keylight/03/#177x702_188x638_199x577_210x519_249x523_212x518_217x476_229x424_260x423_290x424_317x426_371x427_379x468_387x513_395x553_405x604_415x653_422x711_460x679_491x644_522x673_557x706_572x653_584x604_595x549_602x503_613x463_622x421_717x416_706x466_694x516_686x563_680x613_673x664_665x711_686x563_732x551_774x546_758x501_740x456_791x595_810x648_826x702_1
+ */
 var KeylightWorld = new function() {
 	
 	var NUMBER_OF_CHANNELS = 12;
-	var NUMBER_OF_CHORDS = 32;
+	var NUMBER_OF_CHORDS = 30;
 	
 	var NUMBER_OF_ROWS = 3;
 	var NUMBER_OF_COLS = 10;
@@ -17,6 +27,7 @@ var KeylightWorld = new function() {
 	
 	var canvas;
 	var context;
+	var player;
 	var paused;
 	var intro;
 	
@@ -25,11 +36,7 @@ var KeylightWorld = new function() {
 	var playhead;
 	var playheadSpeed = 3;
 	
-	// Holds references to all the preloaded chords audio objects, contents never changes after startup
-	var audioChords = [];
-	
-	// Holds the audio instances used to play back audio, objects in this pool are rotated
-	var audioChannels = [];
+	var audioFiles = [];
 	
 	var mouseX = (window.innerWidth - worldRect.width);
 	var mouseY = (window.innerHeight - worldRect.height);
@@ -37,6 +44,8 @@ var KeylightWorld = new function() {
 	
 	// This is used to keep track of the users last interaction to stop playing sounds after lack of input (save bandwidth)
 	var lastMouseMoveTime = new Date().getTime();
+	
+	var isDragging = false;
 	
 	this.init = function() {
 		
@@ -46,14 +55,8 @@ var KeylightWorld = new function() {
 		
 		if (canvas && canvas.getContext) {
 			
-			// Fetch references to all chord elements in the DOM
 			for( var i = 1; i <= NUMBER_OF_CHORDS; i++ ) {
-				audioChords.push( document.getElementById( 'chord' + i ) );
-			}
-			
-			// Setup the playback channels
-			for( var i = 0; i <= NUMBER_OF_CHANNELS; i++ ) {
-				audioChannels.push( new Audio('') );
+				audioFiles.push( 'https://raw.githubusercontent.com/zhang-qing/demoshow/m1/media_src/keymusic_mp3/' + i + '.mp3' );
 			}
 			
 			context = canvas.getContext('2d');
@@ -65,11 +68,10 @@ var KeylightWorld = new function() {
 //			canvas.addEventListener('dblclick', documentDoubleClickHandler, false);
 			
 			// Touch events
-//			document.addEventListener('touchstart', documentTouchStartHandler, false);
-			canvas.addEventListener('touchstart', documentTouchStartHandler, false);
+			//document.addEventListener('touchstart', documentTouchStartHandler, false);
 			document.addEventListener('touchmove', documentTouchMoveHandler, false);
 			document.addEventListener('touchend', documentTouchEndHandler, false);
-			
+			canvas.addEventListener('touchstart', documentTouchStartHandler, false);			
 			// Keyboard events
 			document.addEventListener('keydown', documentKeyDownHandler, false);
 			
@@ -83,6 +85,8 @@ var KeylightWorld = new function() {
 			window.addEventListener('resize', windowResizeHandler, false);
 			
 			playhead = new Playhead();
+			
+			//embedFlash();
 			
 			// Update the speed with a zero offset, this will enforce the max/min limits
 			updateSpeed(0);
@@ -98,14 +102,37 @@ var KeylightWorld = new function() {
 				intro.style.display = 'block';
 			}
 			
-			setInterval( loop, 1000 / 40 );
+			setInterval( loop, 1000 / 50 );
 		}
 	};
-
+	
+	function embedFlash() {
+		var flashvars = {};
+		var params = { allowScriptAccess: "always" };
+		var attributes = { id: "soundSWF" };
+		
+		swfobject.embedSWF("./sound.swf", "sound", "1", "1", "9.0.0", "", flashvars, params, attributes, embedFlashStatusHandler );
+	}
+	
+	function embedFlashStatusHandler(event) {
+		if( event.success ) {
+			player = document.getElementById('soundSWF');
+		}
+		else {
+	            console.log('PATH: ', "../03b");
+			// redirect to HTML version
+			window.location = '';
+		}
+	}
+ 
 	function documentMouseMoveHandler(event) {
 		updateMousePosition( event );
 		
 		lastMouseMoveTime = new Date().getTime();
+		
+		if( mouseIsDown && !isDragging ) {
+			startDragging();
+		}
 	}
 	
 	function documentMouseDownHandler(event) {
@@ -113,15 +140,15 @@ var KeylightWorld = new function() {
 		
 		mouseIsDown = true;
 		updateMousePosition( event );
-		
-		startDragging();
 	}
 	
 	function documentDoubleClickHandler(event) {
+//	    console.log('documentDoubleClickHandler: ', event);
 		event.preventDefault();
 		
-		mouseIsDown = true;
 		updateMousePosition( event );
+		
+		stopDragging();
 		
 		createKey( mouseX, mouseY );
 		
@@ -137,32 +164,43 @@ var KeylightWorld = new function() {
 	}
 	
 	function documentTouchStartHandler(event) {
+
 		if(event.touches.length == 1) {
+	    //console.log('documentTouchStartHandler: ', event);
 			event.preventDefault();
 			
 			mouseIsDown = true;
 			
 			updateMousePositionTouch( event );
+
+		        stopDragging();
 		
-         		createKey( mouseX, mouseY );
+		        createKey( mouseX, mouseY );
 		
-	        	updateKeysInHash();
+		        updateKeysInHash();
 
 		}
 	}
 	
 	function documentTouchMoveHandler(event) {
 		if(event.touches.length == 1) {
+//	    console.log('documentTouchMoveHandler: ', event.touches[0].clientY);
 			event.preventDefault();
 
 			updateMousePosition( event );
 		}
 		
 		lastMouseMoveTime = new Date().getTime();
+		if( mouseIsDown && !isDragging ) {
+			startDragging();
+		}
+
 	}
 	
 	function documentTouchEndHandler(event) {
+
 		mouseIsDown = false;
+
 	}
 	
 	function documentKeyDownHandler(event) {
@@ -179,9 +217,6 @@ var KeylightWorld = new function() {
 	}
 	
 	function windowResizeHandler() {
-//		worldRect.width = window.innerWidth;
-//		worldRect.height = window.innerHeight;
-		
 		canvas.width = worldRect.width;
 		canvas.height = worldRect.height;
 		
@@ -200,10 +235,9 @@ var KeylightWorld = new function() {
 	
 	// Convenience method called from many mouse event handles to update the current mouse position
 	function updateMousePositionTouch(event) {
-	mouseX = event.touches[0].clientX-(window.innerWidth-worldRect.width) * .5;
-	mouseY = event.touches[0].clientY-(window.innerHeight-worldRect.height) * .5;
-//  console.log('updateMousePosition: ', event.touches[0].clientX);
-
+		mouseX = event.touches[0].clientX - (window.innerWidth - worldRect.width) * .5;
+		mouseY = event.touches[0].clientY - (window.innerHeight - worldRect.height) * .5;
+//	    console.log('updateMousePosition: ', event.touches[0].clientX);//event.changedTouches);
 	}
 
 	function updateMousePosition(event) {
@@ -334,6 +368,8 @@ var KeylightWorld = new function() {
 		
 		if( keys[closestIndex] ) {
 			keys[closestIndex].dragging = true;
+			
+			isDragging = true;
 		}
 	}
 	
@@ -341,6 +377,8 @@ var KeylightWorld = new function() {
 		for (var i = 0, len = keys.length; i < len; i++) {
 			keys[i].dragging = false;
 		}
+		
+		isDragging = false;
 	}
 	
 	// Returns a cell from a point. This point must be within the worldRect
@@ -382,14 +420,7 @@ var KeylightWorld = new function() {
 	}
 	
 	function playChord( index ) {
-		audioChannels[0].pause();
-		
-		audioChannels[0].src = audioChords[index].src;
-		audioChannels[0].load();
-		audioChannels[0].play();
-		
-		// Rotate the channels
-		audioChannels.push( audioChannels.shift() );
+		player.playSound(audioFiles[index]);
 	}
 
 	function loop() {
@@ -435,11 +466,11 @@ var KeylightWorld = new function() {
 					}
 				}
 				
-				if( Math.random() > 0.8 ) {
+				if( Math.random() > 0.75 ) {
 					key.particles.shift();
 				}
 				
-				while( key.particles.length > 50 ) {
+				while( key.particles.length > 35 ) {
 					key.particles.shift();
 				}
 				
@@ -473,6 +504,8 @@ var KeylightWorld = new function() {
 				key.reflection.y += (worldRect.height-key.position.y)*key.scale*xs;
 			}
 			
+			key.scale = Math.min( Math.max( key.scale, 0 ), 1 );
+			
 			sideScale = 1 - Math.max( ( (key.reflection.y-backHeight) / (worldRect.height-backHeight) ), 0 );
 			sideWidth = map.x * sideScale;
 			
@@ -504,7 +537,6 @@ var KeylightWorld = new function() {
 				deadKeys.push( i );
 			}
 			
-			key.cloudSize.current += ( key.cloudSize.target - key.cloudSize.current ) * 0.04;
 			key.size.current += ( key.size.target - key.size.current ) * 0.2;
 			
 			// Sync the color of the key with the current position
@@ -523,34 +555,42 @@ var KeylightWorld = new function() {
 			
 			var attractor = keys[playhead.index];
 			
+			if( attractor.position.x < 0 || attractor.position.x > worldRect.width || attractor.position.y < 0 || attractor.position.y > worldRect.height ) {
+				// Increment index by one but make sure its within bounds
+				playhead.index = playhead.index + 1 > keys.length - 1 ? 0 : playhead.index + 1;
+			}
+			
 			var point = { x: playhead.getPosition().x, y: playhead.getPosition().y, scale: attractor.scale, rx: playhead.getPosition().rx, ry: playhead.getPosition().ry };
 			
-			point.x += ( attractor.position.x - playhead.getPosition().x ) * playheadSpeed / 10;
-			point.y += ( attractor.position.y - playhead.getPosition().y ) * playheadSpeed / 10;
+			point.x += ( attractor.position.x - playhead.getPosition().x ) * playheadSpeed / 12;
+			point.y += ( attractor.position.y - playhead.getPosition().y ) * playheadSpeed / 12;
 			
-			point.rx += ( attractor.reflection.x - playhead.getPosition().rx ) * playheadSpeed / 10;
-			point.ry += ( attractor.reflection.y - playhead.getPosition().ry ) * playheadSpeed / 10;
+			point.rx += ( attractor.reflection.x - playhead.getPosition().rx ) * playheadSpeed / 12;
+			point.ry += ( attractor.reflection.y - playhead.getPosition().ry ) * playheadSpeed / 12;
 			
 			playhead.addPosition( point );
 			
 			if( playhead.distanceTo( attractor.position ) < Math.min( attractor.size.current * attractor.scale, 5 ) ) {
-				playhead.index ++;
+				// Increment index by one but make sure its within bounds
+				playhead.index = playhead.index + 1 > keys.length - 1 ? 0 : playhead.index + 1;
 				
 				// Inherit color from the attractor
 				playhead.color = attractor.color;
 				
-				if( playhead.index > keys.length - 1 ) {
-					playhead.index = 0;
-				}
-				
 				// Emit any extra effects at collision
 				attractor.emit( keys[playhead.index].position );
 				
-				// Determine which cell the attractor key is in
-				var cell = getCellFromPoint( { x: attractor.position.x, y: attractor.position.y } );
+				// Determine the signal of this sound depending on position
+				var signal = { x: attractor.position.x / worldRect.width, y: attractor.position.y / worldRect.height };
+				
+				// Make sure the signal is within bounds (0-1)
+				signal.x = Math.max( Math.min( signal.x, 1 ), 0 );
+				signal.y = Math.max( Math.min( signal.y, 1 ), 0 );
 				
 				// Play back the chord representing the cell that the attractor is in
-				playChord( (cell.y * NUMBER_OF_COLS) + cell.x + 1 );
+	                    console.log('signal : ', signal.x, signal.y);
+                 		player.playSound(audioFiles[index]);
+				//player.playSound( signal.x, signal.y );
 			}
 			
 			// Set the color of the playhead
@@ -628,7 +668,6 @@ function Key() {
 	this.color = { r: 0, g: 0, b: 0, a: 1 };
 	this.size = { current: 0, target: 16 };
 	this.scale = 1;
-	this.cloudSize = { current: 50, target: 50 };
 	this.dragging = false;
 	this.particles = [];
 }
@@ -636,7 +675,6 @@ Key.prototype = new Point();
 Key.prototype.emit = function( direction ) {
 	
 	this.size.current = 12;
-	this.cloudSize.current = 100;
 	
 	var q = 20 + Math.round( Math.random()*20 );
 	var i, p, dx, dy;
@@ -661,7 +699,7 @@ Key.prototype.emit = function( direction ) {
 		p.velocity.y = dy/(100+(Math.random()*500));
 		p.velocity.r = -0.1 + Math.random() * 0.2;
 		
-		p.rotationRadius = Math.random() * 20;
+		p.rotationRadius = Math.random() * 12;
 		
 		this.particles.push( p );
 	}
@@ -680,7 +718,6 @@ Particle.prototype = new Point();
 
 /**
  * 
- * @returns {Playhead}
  */
 function Playhead() {
 	this.positions = [ {x: 0, y: 0, rx: 0, ry: 0, scale: 1} ]; // rx & ry = reflectionX/Y
